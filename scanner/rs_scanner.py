@@ -1,0 +1,146 @@
+"""
+Relative Strength Resilience Scanner.
+
+Finds stocks holding up (or even rising) while Nifty 50 is weak.
+These leaders typically outperform when the market eventually turns.
+
+Filters (all must pass):
+  1. Nifty is weak       — Nifty close < its 20 EMA AND down >2% over 10 days
+  2. Stock is resilient  — stock 10-day return > Nifty 10-day return by >=5 pp
+  3. Mansfield RS rising — smoothed (stock/nifty) ratio today > same 5 days ago
+  4. Stock above 50 EMA  — own trend intact
+  5. Higher low pattern  — 10-day low today > 10-day low from 20 days ago
+  6. RSI 45-65           — pulled in but not overbought
+"""
+
+import sys
+import pandas as pd
+from indicators import (
+    calculate_rsi,
+    calculate_volume_ratio,
+    calculate_ema,
+    mansfield_rs,
+)
+
+# ── Strategy parameters ───────────────────────────────────────────────────────
+NIFTY_EMA           = 20
+NIFTY_DROP_LOOKBACK = 10
+NIFTY_MIN_DROP      = 0.02       # nifty must be down >=2% over 10 days
+RS_OUTPERFORM_PP    = 5.0        # stock outperforms by 5 percentage points
+STOCK_EMA           = 50
+HIGHER_LOW_LOOKBACK = 20
+HL_WINDOW           = 10
+RSI_MIN             = 45
+RSI_MAX             = 65
+TARGET_PCT          = 0.06
+STOP_PCT            = 0.03
+ENTRY_MAX_PCT       = 0.015
+VOLUME_AVG_DAYS     = 20
+MANSFIELD_LOOKBACK  = 5
+MIN_ROWS_NEEDED     = STOCK_EMA + HIGHER_LOW_LOOKBACK + 10
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def is_nifty_weak(nifty_df: pd.DataFrame) -> bool:
+    """Pre-check the Nifty regime once per scanner run."""
+    try:
+        close = nifty_df["Close"].dropna()
+        if len(close) < NIFTY_EMA + NIFTY_DROP_LOOKBACK:
+            return False
+        ema20 = float(calculate_ema(close, NIFTY_EMA).iloc[-1])
+        today = float(close.iloc[-1])
+        if today >= ema20:
+            return False
+        ten_days_ago = float(close.iloc[-(NIFTY_DROP_LOOKBACK + 1)])
+        drop = (ten_days_ago - today) / ten_days_ago
+        return drop >= NIFTY_MIN_DROP
+    except Exception:
+        return False
+
+
+def analyse_rs_resilience(
+    symbol: str,
+    df: pd.DataFrame,
+    nifty_df: pd.DataFrame,
+) -> dict | None:
+    try:
+        close  = df["Close"].dropna()
+        low    = df["Low"].dropna()
+        volume = df["Volume"].dropna()
+        nclose = nifty_df["Close"].dropna()
+
+        if len(close) < MIN_ROWS_NEEDED or len(nclose) < NIFTY_DROP_LOOKBACK + 10:
+            return None
+
+        cmp = round(float(close.iloc[-1]), 2)
+
+        # ── Filter 2: stock outperforming Nifty over 10 days ─────────────────
+        stock_10d_ago = float(close.iloc[-(NIFTY_DROP_LOOKBACK + 1)])
+        nifty_10d_ago = float(nclose.iloc[-(NIFTY_DROP_LOOKBACK + 1)])
+        nifty_now     = float(nclose.iloc[-1])
+
+        stock_ret = (cmp - stock_10d_ago) / stock_10d_ago * 100
+        nifty_ret = (nifty_now - nifty_10d_ago) / nifty_10d_ago * 100
+        if (stock_ret - nifty_ret) < RS_OUTPERFORM_PP:
+            return None
+
+        # ── Filter 3: Mansfield RS rising ────────────────────────────────────
+        rs_now    = mansfield_rs(close, nclose, period=NIFTY_EMA)
+        rs_5d_ago = mansfield_rs(
+            close.iloc[:-MANSFIELD_LOOKBACK],
+            nclose.iloc[:-MANSFIELD_LOOKBACK],
+            period=NIFTY_EMA,
+        )
+        if rs_now <= rs_5d_ago:
+            return None
+
+        # ── Filter 4: stock above own 50 EMA ─────────────────────────────────
+        ema50_series = calculate_ema(close, STOCK_EMA)
+        ema50 = float(ema50_series.iloc[-1])
+        if cmp <= ema50:
+            return None
+
+        # ── Filter 5: higher low pattern ─────────────────────────────────────
+        low_now      = float(low.iloc[-HL_WINDOW:].min())
+        low_20d_back = float(low.iloc[-(HIGHER_LOW_LOOKBACK + HL_WINDOW):-HIGHER_LOW_LOOKBACK].min())
+        if low_now <= low_20d_back:
+            return None
+
+        # ── Filter 6: RSI ────────────────────────────────────────────────────
+        rsi = calculate_rsi(close)
+        if not (RSI_MIN <= rsi <= RSI_MAX):
+            return None
+
+        # ── All filters passed — build signal ────────────────────────────────
+        volume_ratio = calculate_volume_ratio(volume, VOLUME_AVG_DAYS)
+        ema20_series = calculate_ema(close, NIFTY_EMA)
+        ema20_level  = round(float(ema20_series.iloc[-1]), 2)
+
+        entry_min = cmp
+        entry_max = round(cmp * (1 + ENTRY_MAX_PCT), 2)
+        target    = round(entry_min * (1 + TARGET_PCT), 2)
+        # Stop is the larger (= tighter, higher) of: 20 EMA -3%, recent swing low
+        stop_ema     = ema20_level * (1 - STOP_PCT)
+        stop_swing   = float(low.iloc[-HL_WINDOW:].min())
+        stop_loss    = round(max(stop_ema, stop_swing), 2)
+
+        outperformance = stock_ret - nifty_ret
+        strong = outperformance >= 10.0 and volume_ratio >= 1.2
+
+        return {
+            "symbol":          symbol.replace(".NS", ""),
+            "company_name":    symbol.replace(".NS", ""),
+            "cmp":             cmp,
+            "breakout_level":  ema20_level,    # stores 20 EMA support level
+            "entry_min":       entry_min,
+            "entry_max":       entry_max,
+            "target":          target,
+            "stop_loss":       stop_loss,
+            "volume_ratio":    volume_ratio,
+            "rsi":             rsi,
+            "signal_strength": "Strong" if strong else "Moderate",
+        }
+
+    except Exception as e:
+        print(f"  [{symbol}] RS analysis error: {e}", file=sys.stderr)
+        return None

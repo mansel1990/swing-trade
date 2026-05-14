@@ -1,15 +1,21 @@
 """
-Momentum Scanner — runs two strategies on the same batch download each evening.
+Momentum Scanner — runs five strategies on the same batch download each evening.
 
 Strategies:
-  1. Breakout  → swing.signals       (consolidation breakout near 10-day high)
-  2. EMA Pull  → swing.ema_signals   (pullback to 20 EMA in uptrend, bounce entry)
+  1. Breakout       → swing.signals                  (consolidation breakout)
+  2. EMA Pull       → swing.ema_signals              (pullback to 20 EMA in uptrend)
+  3. VCP            → swing.vcp_signals              (volatility contraction pattern)
+  4. RS Resilience  → swing.rs_signals               (outperforming weak Nifty)
+  5. Mean Reversion → swing.mean_reversion_signals   (RSI<30 bounce at support)
 
 Usage:
-  python main.py                   # scan only, print results
-  python main.py --save            # scan + save both strategies to DB
-  python main.py --strategy ema    # run only EMA strategy
-  python main.py --strategy breakout  # run only breakout strategy
+  python main.py                           # scan only, print results
+  python main.py --save                    # scan + save all strategies
+  python main.py --strategy ema            # run only EMA strategy
+  python main.py --strategy breakout       # run only breakout strategy
+  python main.py --strategy vcp            # run only VCP
+  python main.py --strategy rs             # run only Relative Strength
+  python main.py --strategy mr             # run only Mean Reversion
 """
 
 import sys
@@ -18,10 +24,13 @@ import yfinance as yf
 import pandas as pd
 from indicators import calculate_rsi, calculate_volume_ratio, calculate_breakout_level, is_consolidating
 from ema_scanner import analyse_ema_pullback
+from vcp_scanner import analyse_vcp
+from rs_scanner import analyse_rs_resilience, is_nifty_weak
+from mean_reversion_scanner import analyse_mean_reversion
 from stocks import STOCKS, BATCH_SIZE
 
 # ── Breakout strategy parameters ─────────────────────────────────────────────
-LOOKBACK_DAYS       = 60
+LOOKBACK_DAYS       = 220   # bumped from 60 — VCP & 200 EMA need long history
 CONSOLIDATION_DAYS  = 10
 VOLUME_AVG_DAYS     = 20
 MIN_VOLUME_RATIO    = 1.5
@@ -31,9 +40,10 @@ NEAR_BREAKOUT_PCT   = 0.02
 TARGET_PCT          = 0.05
 STOP_LOSS_PCT       = 0.025
 ENTRY_MAX_PCT       = 0.02
-TOP_N               = 10
+TOP_N               = 5
 BATCH_DELAY_SEC     = 2
 MIN_ROWS_NEEDED     = CONSOLIDATION_DAYS + VOLUME_AVG_DAYS + 5
+NIFTY_TICKER        = "^NSEI"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -64,6 +74,28 @@ def fetch_batch(symbols: list[str]) -> dict[str, pd.DataFrame]:
         except Exception:
             continue
     return result
+
+
+def fetch_index(ticker: str) -> pd.DataFrame:
+    """Fetch a single index (e.g. ^NSEI for Nifty 50) for the same lookback."""
+    try:
+        raw = yf.download(
+            ticker,
+            period=f"{LOOKBACK_DAYS}d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+        if raw.empty:
+            return pd.DataFrame()
+        # yfinance may return MultiIndex columns even for single ticker
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        return raw
+    except Exception as e:
+        print(f"  [index {ticker}] fetch error: {e}", file=sys.stderr)
+        return pd.DataFrame()
 
 
 def analyse_breakout(symbol: str, df: pd.DataFrame) -> dict | None:
@@ -118,7 +150,14 @@ def analyse_breakout(symbol: str, df: pd.DataFrame) -> dict | None:
 
 
 def print_signal(s: dict, strategy: str = "BREAKOUT"):
-    label = "20EMA" if strategy == "EMA" else "Brkout"
+    label_map = {
+        "EMA":      "20EMA",
+        "VCP":      "Pivot",
+        "RS":       "20EMA",
+        "MR":       "Suprt",
+        "BREAKOUT": "Brkout",
+    }
+    label = label_map.get(strategy, "Level")
     print(
         f"{s['symbol']:<14} | "
         f"CMP: Rs{s['cmp']:<8} | "
@@ -143,17 +182,52 @@ def print_section(title: str, results: list[dict], strategy: str):
             print_signal(s, strategy)
 
 
+# Strategy registry: (key, label, table, log_strategy_name, runner)
+# The runner returns (results_list, signal_label_for_print).
+STRATEGY_KEYS = ("breakout", "ema", "vcp", "rs", "mr")
+
+
 def main(save_to_db: bool = False, strategy: str = "all"):
-    run_breakout = strategy in ("all", "breakout")
-    run_ema      = strategy in ("all", "ema")
+    selected = STRATEGY_KEYS if strategy == "all" else (strategy,)
+
+    run_breakout = "breakout" in selected
+    run_ema      = "ema"      in selected
+    run_vcp      = "vcp"      in selected
+    run_rs       = "rs"       in selected
+    run_mr       = "mr"       in selected
 
     total   = len(STOCKS)
     batches = [STOCKS[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+
+    label_map = {
+        "all":      "Breakout + EMA + VCP + RS + Mean Reversion",
+        "breakout": "Breakout",
+        "ema":      "EMA Pullback",
+        "vcp":      "VCP",
+        "rs":       "Relative Strength Resilience",
+        "mr":       "Mean Reversion",
+    }
     print(f"Scanning {total} stocks in {len(batches)} batch(es) | "
-          f"Strategies: {'Breakout + EMA Pullback' if strategy == 'all' else strategy.upper()}\n")
+          f"Strategies: {label_map.get(strategy, strategy)}\n")
+
+    # Fetch Nifty once if RS strategy is active
+    nifty_df = pd.DataFrame()
+    nifty_weak = False
+    if run_rs:
+        print("  [Nifty] Downloading ^NSEI for relative strength...", flush=True)
+        nifty_df = fetch_index(NIFTY_TICKER)
+        if nifty_df.empty:
+            print("  [Nifty] WARNING: failed to fetch — RS strategy will be skipped.")
+            run_rs = False
+        else:
+            nifty_weak = is_nifty_weak(nifty_df)
+            print(f"  [Nifty] regime: {'WEAK (RS scan active)' if nifty_weak else 'strong (RS will skip)'}")
 
     breakout_results = []
     ema_results      = []
+    vcp_results      = []
+    rs_results       = []
+    mr_results       = []
 
     for batch_num, batch in enumerate(batches, 1):
         print(f"  [Batch {batch_num}/{len(batches)}] Downloading {len(batch)} tickers...", flush=True)
@@ -165,16 +239,23 @@ def main(save_to_db: bool = False, strategy: str = "all"):
                 continue
             df = data[sym]
 
-            b_signal = analyse_breakout(sym, df)  if run_breakout else None
-            e_signal = analyse_ema_pullback(sym, df) if run_ema      else None
+            b_signal = analyse_breakout(sym, df)        if run_breakout else None
+            e_signal = analyse_ema_pullback(sym, df)    if run_ema      else None
+            v_signal = analyse_vcp(sym, df)             if run_vcp      else None
+            r_signal = analyse_rs_resilience(sym, df, nifty_df) if (run_rs and nifty_weak) else None
+            m_signal = analyse_mean_reversion(sym, df)  if run_mr       else None
 
             tag = []
             if b_signal:
-                breakout_results.append(b_signal)
-                tag.append("BREAKOUT")
+                breakout_results.append(b_signal); tag.append("BREAKOUT")
             if e_signal:
-                ema_results.append(e_signal)
-                tag.append("EMA-PULL")
+                ema_results.append(e_signal);      tag.append("EMA-PULL")
+            if v_signal:
+                vcp_results.append(v_signal);      tag.append("VCP")
+            if r_signal:
+                rs_results.append(r_signal);       tag.append("RS")
+            if m_signal:
+                mr_results.append(m_signal);       tag.append("MEAN-REV")
 
             if tag:
                 print(f"    {sym:<22} {' + '.join(tag)}")
@@ -183,15 +264,24 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             time.sleep(BATCH_DELAY_SEC)
 
     # Sort and trim
-    breakout_results.sort(key=lambda x: x["volume_ratio"], reverse=True)
-    ema_results.sort(key=lambda x: x["volume_ratio"], reverse=True)
+    for r in (breakout_results, ema_results, vcp_results, rs_results, mr_results):
+        r.sort(key=lambda x: x["volume_ratio"], reverse=True)
     top_breakout = breakout_results[:TOP_N]
     top_ema      = ema_results[:TOP_N]
+    top_vcp      = vcp_results[:TOP_N]
+    top_rs       = rs_results[:TOP_N]
+    top_mr       = mr_results[:TOP_N]
 
     if run_breakout:
         print_section("BREAKOUT SIGNALS  (entry above consolidation high)", top_breakout, "BREAKOUT")
     if run_ema:
         print_section("EMA PULLBACK SIGNALS  (bounce off 20 EMA in uptrend)", top_ema, "EMA")
+    if run_vcp:
+        print_section("VCP SIGNALS  (Minervini-style tight contractions near pivot)", top_vcp, "VCP")
+    if run_rs:
+        print_section("RS RESILIENCE SIGNALS  (outperforming weak Nifty)", top_rs, "RS")
+    if run_mr:
+        print_section("MEAN REVERSION SIGNALS  (oversold bounce at support)", top_mr, "MR")
 
     if save_to_db:
         from db import ensure_table, delete_today_signals, save_signals
@@ -201,25 +291,25 @@ def main(save_to_db: bool = False, strategy: str = "all"):
         print("\n[Performance tracker]")
         evaluate_open_positions()
 
-        if run_breakout:
-            ensure_table("signals")
-            delete_today_signals("signals")
-            if top_breakout:
-                save_signals(top_breakout, "signals")
-                log_new_signals(top_breakout, "breakout")
+        save_jobs = [
+            (run_breakout, "signals",                  top_breakout, "breakout"),
+            (run_ema,      "ema_signals",              top_ema,      "ema_pullback"),
+            (run_vcp,      "vcp_signals",              top_vcp,      "vcp"),
+            (run_rs,       "rs_signals",               top_rs,       "rs_resilience"),
+            (run_mr,       "mean_reversion_signals",   top_mr,       "mean_reversion"),
+        ]
+        for run_flag, table, top_list, log_name in save_jobs:
+            if not run_flag:
+                continue
+            ensure_table(table)
+            delete_today_signals(table)
+            if top_list:
+                save_signals(top_list, table)
+                log_new_signals(top_list, log_name)
             else:
-                print("(Nothing to save - no breakout signals today.)")
+                print(f"(Nothing to save - no {log_name} signals today.)")
 
-        if run_ema:
-            ensure_table("ema_signals")
-            delete_today_signals("ema_signals")
-            if top_ema:
-                save_signals(top_ema, "ema_signals")
-                log_new_signals(top_ema, "ema_pullback")
-            else:
-                print("(Nothing to save - no EMA pullback signals today.)")
-
-    return top_breakout, top_ema
+    return top_breakout, top_ema, top_vcp, top_rs, top_mr
 
 
 if __name__ == "__main__":
