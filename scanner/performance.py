@@ -25,6 +25,88 @@ MAX_HOLD_DAYS = 7            # force-exit after this many calendar days
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+def evaluate_exit_one_day(
+    signal_date: date,
+    eval_date: date,
+    high: float,
+    low: float,
+    close: float,
+    target_price: float,
+    stop_loss_price: float,
+    max_hold_days: int = MAX_HOLD_DAYS,
+) -> tuple[str | None, float | None]:
+    """
+    Same branching order as live evaluate_open_positions: target, then SL, then timeout.
+    Returns (exit_reason, exit_price) or (None, None) if still open this day.
+    """
+    days_held = (eval_date - signal_date).days
+    if high >= target_price:
+        return "target_hit", float(target_price)
+    if low <= stop_loss_price:
+        return "stop_loss", float(stop_loss_price)
+    if days_held >= max_hold_days:
+        return "timeout", float(close)
+    return None, None
+
+
+def simulate_trade_exit(
+    signal_date: date,
+    future_bars: list[tuple[date, float, float, float]],
+    entry_price: float,
+    target_price: float,
+    stop_loss_price: float,
+    max_hold_days: int = MAX_HOLD_DAYS,
+    investment: float = INVESTMENT,
+) -> dict:
+    """
+    Walk forward day-by-day after signal_date using DB (or live-style) OHLC.
+
+    future_bars: (trade_date, high, low, close) sorted ascending, each date > signal_date.
+
+    exit_reason:
+      target_hit | stop_loss | timeout — same as production
+      eod_sample — ran out of history before any rule closed the trade (exit at last close)
+      no_forward_data — signal on last bar(s), no rows after signal_date
+    """
+    if not future_bars:
+        return {
+            "exit_date": None,
+            "exit_price": None,
+            "exit_reason": "no_forward_data",
+            "pnl": None,
+            "pnl_pct": None,
+        }
+
+    for d, high, low, close in future_bars:
+        reason, price = evaluate_exit_one_day(
+            signal_date, d, high, low, close,
+            target_price, stop_loss_price, max_hold_days,
+        )
+        if reason is not None and price is not None:
+            pnl_pct = round((price - entry_price) / entry_price * 100, 4)
+            pnl = round((price - entry_price) / entry_price * investment, 2)
+            return {
+                "exit_date": d,
+                "exit_price": price,
+                "exit_reason": reason,
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+            }
+
+    last = future_bars[-1]
+    d, _, _, close = last
+    price = float(close)
+    pnl_pct = round((price - entry_price) / entry_price * 100, 4)
+    pnl = round((price - entry_price) / entry_price * investment, 2)
+    return {
+        "exit_date": d,
+        "exit_price": price,
+        "exit_reason": "eod_sample",
+        "pnl": pnl,
+        "pnl_pct": pnl_pct,
+    }
+
+
 def _fetch_today_ohlc(symbols: list[str]) -> dict[str, dict]:
     """Fetch today's OHLC for a list of symbols in one call."""
     if not symbols:
@@ -127,18 +209,21 @@ def evaluate_open_positions():
                 low      = data["low"]
                 close    = data["close"]
 
-                if high >= target:
-                    _close_position(conn, pos["id"], target, "target_hit", today)
+                reason, exit_px = evaluate_exit_one_day(
+                    pos["signal_date"], today, high, low, close, target, sl,
+                )
+                if reason == "target_hit":
+                    _close_position(conn, pos["id"], exit_px, reason, today)
                     closed_count += 1
-                    print(f"    {sym}: TARGET HIT  exit=₹{target}")
-                elif low <= sl:
-                    _close_position(conn, pos["id"], sl, "stop_loss", today)
+                    print(f"    {sym}: TARGET HIT  exit=₹{exit_px}")
+                elif reason == "stop_loss":
+                    _close_position(conn, pos["id"], exit_px, reason, today)
                     closed_count += 1
-                    print(f"    {sym}: STOP LOSS   exit=₹{sl}")
-                elif days_held >= MAX_HOLD_DAYS:
-                    _close_position(conn, pos["id"], close, "timeout", today)
+                    print(f"    {sym}: STOP LOSS   exit=₹{exit_px}")
+                elif reason == "timeout":
+                    _close_position(conn, pos["id"], exit_px, reason, today)
                     closed_count += 1
-                    print(f"    {sym}: TIMEOUT     exit=₹{close} (day {days_held})")
+                    print(f"    {sym}: TIMEOUT     exit=₹{exit_px} (day {days_held})")
                 else:
                     print(f"    {sym}: still open  (day {days_held})")
 

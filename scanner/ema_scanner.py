@@ -28,7 +28,8 @@ RSI_MIN             = 40
 RSI_MAX             = 62
 MAX_ABOVE_SLOW_EMA  = 0.15   # price must be within 15% above 50 EMA
 TARGET_PCT          = 0.04   # +4% from entry
-STOP_PCT            = 0.02   # -2% below 20 EMA
+STOP_PCT            = 0.02   # -2% below 20 EMA (one SL component)
+STOP_HARD_PCT       = 0.03   # hard floor: SL never more than -3% below entry (R:R guardrail)
 ENTRY_MAX_PCT       = 0.01   # entry zone upper bound = 20 EMA + 1%
 EMA_RISING_LOOKBACK = 5      # days to check if 20 EMA is rising
 BOUNCE_VOL_RATIO    = 1.2    # bounce day volume for "Strong" signal
@@ -75,16 +76,10 @@ def analyse_ema_pullback(symbol: str, df: pd.DataFrame) -> dict | None:
         if not touched:
             return None
 
-        # ── Filter 4: Healthy pullback — low-volume dip ───────────────────────
+        # ── Filter 4: REMOVED — low-volume pullback (A/B test) ────────────────
+        # Still need avg_vol for signal-strength calc below
         avg_vol = float(volume.iloc[-(VOLUME_AVG_DAYS + 1):-1].mean())
         if avg_vol == 0:
-            return None
-        # Find the day with the lowest close in the pullback window
-        pullback_vols = volume.iloc[-(PULLBACK_LOOKBACK + 1):-1]
-        lowest_close_idx = recent_closes.values.argmin()
-        pullback_vol = float(pullback_vols.iloc[lowest_close_idx])
-        if pullback_vol >= avg_vol:
-            # Pullback was on heavy volume — institutions selling, not healthy
             return None
 
         # ── Filter 5: RSI in range ────────────────────────────────────────────
@@ -99,7 +94,11 @@ def analyse_ema_pullback(symbol: str, df: pd.DataFrame) -> dict | None:
         entry_min = cmp
         entry_max = round(ema20_now * (1 + ENTRY_MAX_PCT), 2)
         target    = round(entry_min * (1 + TARGET_PCT), 2)
-        stop_loss = round(ema20_now * (1 - STOP_PCT), 2)
+        # Stop loss = tighter of {2% below 20 EMA, 3% below entry}.
+        # Guards R:R from collapsing when CMP runs far above the 20 EMA.
+        sl_ema    = ema20_now * (1 - STOP_PCT)
+        sl_hard   = entry_min * (1 - STOP_HARD_PCT)
+        stop_loss = round(max(sl_ema, sl_hard), 2)
 
         # Signal strength: EMA rising AND today's volume above average
         ema20_5d_ago = float(ema20_series.iloc[-(EMA_RISING_LOOKBACK + 1)])

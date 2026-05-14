@@ -9,6 +9,9 @@ venv/
 .env
 .env.local
 
+# Backtest CSV output
+scanner/backtest_reports/
+
 # Node / Next.js
 node_modules/
 .next/
