@@ -37,3 +37,8 @@ def is_consolidating(highs: pd.Series, lows: pd.Series, lookback: int = 10, thre
     window_lows = lows.iloc[-(lookback + 1):-1]
     range_pct = (window_highs.max() - window_lows.min()) / window_lows.min()
     return range_pct < threshold
+
+
+def calculate_ema(series: pd.Series, period: int) -> pd.Series:
+    """Returns the full EMA series. Use .iloc[-1] for the latest value."""
+    return series.ewm(span=period, adjust=False).mean()
