@@ -6,7 +6,7 @@ Feed this file + `C:\Projects\mcube\docs\CONTEXT_FOR_AI.md` to Claude at the sta
 
 ## What this system is
 A personal swing trading assistant for NSE (Indian) stocks. Two parts:
-1. **Python scanner** (`C:\Projects\trading\scanner\`) — runs 5 strategies each evening, saves top-5 signals per strategy to Neon Postgres
+1. **Python scanner** (`C:\Projects\trading\scanner\`) — runs 6 strategies each evening, saves top-5 signals per strategy to Neon Postgres
 2. **Next.js dashboard** (`C:\Projects\mcube\`) — displays signals, tracks performance, shows strategy explanations
 
 ## Current state (2026-05-14)
@@ -24,9 +24,9 @@ A personal swing trading assistant for NSE (Indian) stocks. Two parts:
 - **Root dir in Railway:** `scanner/` (important — must be set in Railway settings)
 - **Run command:** `python main.py --save`
 - **Test command (no DB write):** `python main.py`
-- **Single strategy:** `python main.py --strategy ema` (ema | breakout | vcp | rs | mr)
+- **Single strategy:** `python main.py --strategy ema` (ema | breakout | vcp | rs | mr | fib)
 
-## Strategies (5 total)
+## Strategies (6 total)
 | Key | Module | Table | Regime |
 |---|---|---|---|
 | breakout | main.py (inline) | swing.signals | Bull / trending |
@@ -34,6 +34,7 @@ A personal swing trading assistant for NSE (Indian) stocks. Two parts:
 | vcp | vcp_scanner.py | swing.vcp_signals | Any (rare) |
 | rs | rs_scanner.py | swing.rs_signals | Nifty weak only |
 | mr | mean_reversion_scanner.py | swing.mean_reversion_signals | Ranging / correcting |
+| fib | fib_pullback_scanner.py | swing.fib_signals | Bull / trending (deep pullback) |
 
 **TOP_N = 5** — each strategy saves its top 5 by volume_ratio
 
@@ -43,6 +44,7 @@ A personal swing trading assistant for NSE (Indian) stocks. Two parts:
 - swing.vcp_signals
 - swing.rs_signals
 - swing.mean_reversion_signals
+- swing.fib_signals
 - swing.strategy_performance (performance tracker — all strategies)
 
 There is also a `stocks` schema used for daily OHLCV charts — do NOT touch it.
@@ -63,6 +65,7 @@ There is also a `stocks` schema used for daily OHLCV charts — do NOT touch it.
 | /stocks/vcp | app/(stocks)/stocks/vcp/ | purple |
 | /stocks/rs-resilience | app/(stocks)/stocks/rs-resilience/ | rose |
 | /stocks/mean-reversion | app/(stocks)/stocks/mean-reversion/ | teal |
+| /stocks/fib-pullback | app/(stocks)/stocks/fib-pullback/ | cyan |
 | /stocks/performance | app/(stocks)/stocks/performance/ | amber |
 | /stocks/chart | app/(stocks)/stocks/chart/ | slate |
 
@@ -90,6 +93,7 @@ There is also a `stocks` schema used for daily OHLCV charts — do NOT touch it.
 ## Known issues / decisions
 - RS Resilience only produces signals when Nifty is weak — zero signals on strong days is correct behavior
 - VCP signals are rare (0–5/day across 180 stocks) — that's expected
-- `breakout_level` column stores different things per strategy (resistance, EMA, pivot, support) — the UI shows whatever `levelLabel` the page passes to SignalCard
+- `breakout_level` column stores different things per strategy (resistance, EMA, pivot, support, swing low) — the UI shows whatever `levelLabel` the page passes to SignalCard
 - Session is 1 year — users don't need to re-login
 - Recharts Tooltip formatter must accept `number | undefined` — use `v ?? 0` to avoid TypeScript errors
+- **Fib Pullback** v1 deliberately skips Pat's "look-left for prior demand zone" rule — too hard to mechanize reliably. Swing-low SL acts as proxy. If live performance lags, revisit with a pivot-cluster detector.

@@ -1,7 +1,7 @@
 """
 Walk-forward backtest using `stocks.daily_ohlcv` only (no Yahoo).
 
-Runs breakout, EMA pullback, VCP, and mean reversion — same `analyse_*` as main.py.
+Runs breakout, EMA pullback, VCP, mean reversion, and Fib pullback — same `analyse_*` as main.py.
 RS Resilience is skipped (requires Nifty OHLCV).
 
 Usage (from `scanner/` directory):
@@ -28,6 +28,7 @@ load_dotenv()
 
 from db import get_connection
 from ema_scanner import analyse_ema_pullback
+from fib_pullback_scanner import analyse_fib_pullback
 from mean_reversion_scanner import analyse_mean_reversion
 from performance import INVESTMENT, MAX_HOLD_DAYS, simulate_trade_exit
 from stocks import STOCKS
@@ -205,7 +206,7 @@ def run_backtest(
 
     all_dates = [d for d in all_dates if d >= global_start]
 
-    strategy_names = ("breakout", "ema_pullback", "vcp", "mean_reversion")
+    strategy_names = ("breakout", "ema_pullback", "vcp", "mean_reversion", "fib_pullback")
 
     trades: list[dict] = []
 
@@ -222,6 +223,7 @@ def run_backtest(
             e = analyse_ema_pullback(stock_key, sl)
             v = analyse_vcp(stock_key, sl)
             m = analyse_mean_reversion(stock_key, sl)
+            f = analyse_fib_pullback(stock_key, sl)
 
             if b:
                 pools["breakout"].append((b, stock_key))
@@ -231,6 +233,8 @@ def run_backtest(
                 pools["vcp"].append((v, stock_key))
             if m:
                 pools["mean_reversion"].append((m, stock_key))
+            if f:
+                pools["fib_pullback"].append((f, stock_key))
 
         for strat_name in strategy_names:
             lst = pools[strat_name]

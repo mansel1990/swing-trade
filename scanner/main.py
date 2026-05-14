@@ -1,5 +1,5 @@
 """
-Momentum Scanner — runs five strategies on the same batch download each evening.
+Momentum Scanner — runs six strategies on the same batch download each evening.
 
 Strategies:
   1. Breakout       → swing.signals                  (consolidation breakout)
@@ -7,6 +7,7 @@ Strategies:
   3. VCP            → swing.vcp_signals              (volatility contraction pattern)
   4. RS Resilience  → swing.rs_signals               (outperforming weak Nifty)
   5. Mean Reversion → swing.mean_reversion_signals   (RSI<30 bounce at support)
+  6. Fib Pullback   → swing.fib_signals              (50% Fib retrace + green confirm)
 
 Usage:
   python main.py                           # scan only, print results
@@ -16,6 +17,7 @@ Usage:
   python main.py --strategy vcp            # run only VCP
   python main.py --strategy rs             # run only Relative Strength
   python main.py --strategy mr             # run only Mean Reversion
+  python main.py --strategy fib            # run only Fib Pullback
 """
 
 import sys
@@ -27,6 +29,7 @@ from ema_scanner import analyse_ema_pullback
 from vcp_scanner import analyse_vcp
 from rs_scanner import analyse_rs_resilience, is_nifty_weak
 from mean_reversion_scanner import analyse_mean_reversion
+from fib_pullback_scanner import analyse_fib_pullback
 from stocks import STOCKS, BATCH_SIZE
 
 # ── Breakout strategy parameters ─────────────────────────────────────────────
@@ -155,6 +158,7 @@ def print_signal(s: dict, strategy: str = "BREAKOUT"):
         "VCP":      "Pivot",
         "RS":       "20EMA",
         "MR":       "Suprt",
+        "FIB":      "SwLow",
         "BREAKOUT": "Brkout",
     }
     label = label_map.get(strategy, "Level")
@@ -184,7 +188,7 @@ def print_section(title: str, results: list[dict], strategy: str):
 
 # Strategy registry: (key, label, table, log_strategy_name, runner)
 # The runner returns (results_list, signal_label_for_print).
-STRATEGY_KEYS = ("breakout", "ema", "vcp", "rs", "mr")
+STRATEGY_KEYS = ("breakout", "ema", "vcp", "rs", "mr", "fib")
 
 
 def main(save_to_db: bool = False, strategy: str = "all"):
@@ -195,17 +199,19 @@ def main(save_to_db: bool = False, strategy: str = "all"):
     run_vcp      = "vcp"      in selected
     run_rs       = "rs"       in selected
     run_mr       = "mr"       in selected
+    run_fib      = "fib"      in selected
 
     total   = len(STOCKS)
     batches = [STOCKS[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
 
     label_map = {
-        "all":      "Breakout + EMA + VCP + RS + Mean Reversion",
+        "all":      "Breakout + EMA + VCP + RS + Mean Reversion + Fib",
         "breakout": "Breakout",
         "ema":      "EMA Pullback",
         "vcp":      "VCP",
         "rs":       "Relative Strength Resilience",
         "mr":       "Mean Reversion",
+        "fib":      "Fib Pullback",
     }
     print(f"Scanning {total} stocks in {len(batches)} batch(es) | "
           f"Strategies: {label_map.get(strategy, strategy)}\n")
@@ -228,6 +234,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
     vcp_results      = []
     rs_results       = []
     mr_results       = []
+    fib_results      = []
 
     for batch_num, batch in enumerate(batches, 1):
         print(f"  [Batch {batch_num}/{len(batches)}] Downloading {len(batch)} tickers...", flush=True)
@@ -244,6 +251,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             v_signal = analyse_vcp(sym, df)             if run_vcp      else None
             r_signal = analyse_rs_resilience(sym, df, nifty_df) if (run_rs and nifty_weak) else None
             m_signal = analyse_mean_reversion(sym, df)  if run_mr       else None
+            f_signal = analyse_fib_pullback(sym, df)    if run_fib      else None
 
             tag = []
             if b_signal:
@@ -256,6 +264,8 @@ def main(save_to_db: bool = False, strategy: str = "all"):
                 rs_results.append(r_signal);       tag.append("RS")
             if m_signal:
                 mr_results.append(m_signal);       tag.append("MEAN-REV")
+            if f_signal:
+                fib_results.append(f_signal);      tag.append("FIB")
 
             if tag:
                 print(f"    {sym:<22} {' + '.join(tag)}")
@@ -264,13 +274,14 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             time.sleep(BATCH_DELAY_SEC)
 
     # Sort and trim
-    for r in (breakout_results, ema_results, vcp_results, rs_results, mr_results):
+    for r in (breakout_results, ema_results, vcp_results, rs_results, mr_results, fib_results):
         r.sort(key=lambda x: x["volume_ratio"], reverse=True)
     top_breakout = breakout_results[:TOP_N]
     top_ema      = ema_results[:TOP_N]
     top_vcp      = vcp_results[:TOP_N]
     top_rs       = rs_results[:TOP_N]
     top_mr       = mr_results[:TOP_N]
+    top_fib      = fib_results[:TOP_N]
 
     if run_breakout:
         print_section("BREAKOUT SIGNALS  (entry above consolidation high)", top_breakout, "BREAKOUT")
@@ -282,6 +293,8 @@ def main(save_to_db: bool = False, strategy: str = "all"):
         print_section("RS RESILIENCE SIGNALS  (outperforming weak Nifty)", top_rs, "RS")
     if run_mr:
         print_section("MEAN REVERSION SIGNALS  (oversold bounce at support)", top_mr, "MR")
+    if run_fib:
+        print_section("FIB PULLBACK SIGNALS  (50% Fib retrace + green confirm)", top_fib, "FIB")
 
     if save_to_db:
         from db import ensure_table, delete_today_signals, save_signals
@@ -297,6 +310,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             (run_vcp,      "vcp_signals",              top_vcp,      "vcp"),
             (run_rs,       "rs_signals",               top_rs,       "rs_resilience"),
             (run_mr,       "mean_reversion_signals",   top_mr,       "mean_reversion"),
+            (run_fib,      "fib_signals",              top_fib,      "fib_pullback"),
         ]
         for run_flag, table, top_list, log_name in save_jobs:
             if not run_flag:
@@ -309,7 +323,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             else:
                 print(f"(Nothing to save - no {log_name} signals today.)")
 
-    return top_breakout, top_ema, top_vcp, top_rs, top_mr
+    return top_breakout, top_ema, top_vcp, top_rs, top_mr, top_fib
 
 
 if __name__ == "__main__":
