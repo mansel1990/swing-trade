@@ -195,12 +195,18 @@ def main(save_to_db: bool = False, strategy: str = "all"):
 
     if save_to_db:
         from db import ensure_table, delete_today_signals, save_signals
+        from performance import evaluate_open_positions, log_new_signals
+
+        # Step 1: Evaluate existing open positions with today's prices
+        print("\n[Performance tracker]")
+        evaluate_open_positions()
 
         if run_breakout:
             ensure_table("signals")
             delete_today_signals("signals")
             if top_breakout:
                 save_signals(top_breakout, "signals")
+                log_new_signals(top_breakout, "breakout")
             else:
                 print("(Nothing to save - no breakout signals today.)")
 
@@ -209,6 +215,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             delete_today_signals("ema_signals")
             if top_ema:
                 save_signals(top_ema, "ema_signals")
+                log_new_signals(top_ema, "ema_pullback")
             else:
                 print("(Nothing to save - no EMA pullback signals today.)")
 
