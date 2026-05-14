@@ -1,0 +1,3 @@
+[deploy]
+startCommand = "python main.py --save"
+cronSchedule = "30 12 * * 1-5"
