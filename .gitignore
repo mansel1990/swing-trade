@@ -12,6 +12,9 @@ venv/
 # Backtest CSV output
 scanner/backtest_reports/
 
+# Claude Code session metadata
+.claude/
+
 # Node / Next.js
 node_modules/
 .next/
