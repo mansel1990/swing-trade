@@ -2,7 +2,7 @@
 Momentum Scanner — runs six strategies on the same batch download each evening.
 
 Strategies:
-  1. Breakout       → swing.signals                  (consolidation breakout)
+  1. Breakout       → swing.breakout_signals          (consolidation breakout)
   2. EMA Pull       → swing.ema_signals              (pullback to 20 EMA in uptrend)
   3. VCP            → swing.vcp_signals              (volatility contraction pattern)
   4. RS Resilience  → swing.rs_signals               (outperforming weak Nifty)
@@ -305,7 +305,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
         evaluate_open_positions()
 
         save_jobs = [
-            (run_breakout, "signals",                  top_breakout, "breakout"),
+            (run_breakout, "breakout_signals",          top_breakout, "breakout"),
             (run_ema,      "ema_signals",              top_ema,      "ema_pullback"),
             (run_vcp,      "vcp_signals",              top_vcp,      "vcp"),
             (run_rs,       "rs_signals",               top_rs,       "rs_resilience"),

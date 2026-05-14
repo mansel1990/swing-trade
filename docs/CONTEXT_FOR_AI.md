@@ -29,7 +29,7 @@ A personal swing trading assistant for NSE (Indian) stocks. Two parts:
 ## Strategies (6 total)
 | Key | Module | Table | Regime |
 |---|---|---|---|
-| breakout | main.py (inline) | swing.signals | Bull / trending |
+| breakout | main.py (inline) | swing.breakout_signals | Bull / trending |
 | ema | ema_scanner.py | swing.ema_signals | Bull / trending |
 | vcp | vcp_scanner.py | swing.vcp_signals | Any (rare) |
 | rs | rs_scanner.py | swing.rs_signals | Nifty weak only |
@@ -39,7 +39,7 @@ A personal swing trading assistant for NSE (Indian) stocks. Two parts:
 **TOP_N = 5** — each strategy saves its top 5 by volume_ratio
 
 ## DB tables (Neon, swing schema)
-- swing.signals
+- swing.breakout_signals
 - swing.ema_signals
 - swing.vcp_signals
 - swing.rs_signals

@@ -30,7 +30,7 @@ def get_connection():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
-def ensure_table(table: str = "signals"):
+def ensure_table(table: str = "breakout_signals"):
     """Create the schema + named table if they don't exist yet."""
     conn = get_connection()
     with conn:
@@ -41,7 +41,7 @@ def ensure_table(table: str = "signals"):
     print(f"Table '{SCHEMA}.{table}' is ready.")
 
 
-def delete_today_signals(table: str = "signals"):
+def delete_today_signals(table: str = "breakout_signals"):
     """Remove today's rows before re-inserting (makes runs idempotent)."""
     conn = get_connection()
     with conn:
@@ -50,7 +50,7 @@ def delete_today_signals(table: str = "signals"):
     conn.close()
 
 
-def save_signals(signals: list[dict], table: str = "signals"):
+def save_signals(signals: list[dict], table: str = "breakout_signals"):
     if not signals:
         return
     conn = get_connection()
