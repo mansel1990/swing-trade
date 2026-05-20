@@ -215,15 +215,15 @@ def evaluate_open_positions():
                 if reason == "target_hit":
                     _close_position(conn, pos["id"], exit_px, reason, today)
                     closed_count += 1
-                    print(f"    {sym}: TARGET HIT  exit=₹{exit_px}")
+                    print(f"    {sym}: TARGET HIT  exit=Rs{exit_px}")
                 elif reason == "stop_loss":
                     _close_position(conn, pos["id"], exit_px, reason, today)
                     closed_count += 1
-                    print(f"    {sym}: STOP LOSS   exit=₹{exit_px}")
+                    print(f"    {sym}: STOP LOSS   exit=Rs{exit_px}")
                 elif reason == "timeout":
                     _close_position(conn, pos["id"], exit_px, reason, today)
                     closed_count += 1
-                    print(f"    {sym}: TIMEOUT     exit=₹{exit_px} (day {days_held})")
+                    print(f"    {sym}: TIMEOUT     exit=Rs{exit_px} (day {days_held})")
                 else:
                     print(f"    {sym}: still open  (day {days_held})")
 
