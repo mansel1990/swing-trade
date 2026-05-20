@@ -1,8 +1,9 @@
 """
 Walk-forward backtest using `stocks.daily_ohlcv` only (no Yahoo).
 
-Runs breakout, EMA pullback, VCP, mean reversion, and Fib pullback — same `analyse_*` as main.py.
-RS Resilience is skipped (requires Nifty OHLCV).
+Runs breakout, EMA pullback, VCP, mean reversion, Fib pullback and Fear Reversion.
+RS Resilience is skipped (requires Nifty OHLCV in DB).
+Fear Reversion fetches ^INDIAVIX from yfinance once at startup (small call, ~2s).
 
 Usage (from `scanner/` directory):
   python backtest_db.py
@@ -26,9 +27,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import yfinance as yf
 from db import get_connection
 from ema_scanner import analyse_ema_pullback
 from fib_pullback_scanner import analyse_fib_pullback
+from fear_reversion_scanner import analyse_fear_reversion, LARGE_CAP_SYMBOLS, VIX_THRESHOLD
 from mean_reversion_scanner import analyse_mean_reversion
 from performance import INVESTMENT, MAX_HOLD_DAYS, simulate_trade_exit
 from stocks import STOCKS
@@ -206,12 +209,35 @@ def run_backtest(
 
     all_dates = [d for d in all_dates if d >= global_start]
 
-    strategy_names = ("breakout", "ema_pullback", "vcp", "mean_reversion", "fib_pullback")
+    # Fetch India VIX once for Fear Reversion regime filter
+    print("Fetching ^INDIAVIX for Fear Reversion backtest window...", flush=True)
+    try:
+        from datetime import timedelta as _tdvix
+        vix_raw = yf.download(
+            "^INDIAVIX",
+            start=(d_from - _tdvix(days=5)).isoformat(),
+            end=(d_to + _tdvix(days=5)).isoformat(),
+            interval="1d", auto_adjust=True, progress=False,
+        )
+        if isinstance(vix_raw.columns, pd.MultiIndex):
+            vix_raw.columns = vix_raw.columns.get_level_values(0)
+        # Build set of dates where VIX was elevated
+        vix_elevated_dates: set[date] = set()
+        for idx, row in vix_raw.iterrows():
+            if float(row["Close"]) > VIX_THRESHOLD:
+                vix_elevated_dates.add(_to_date(idx))
+        print(f"VIX elevated (>{VIX_THRESHOLD}) on {len(vix_elevated_dates)} days in range.")
+    except Exception as e:
+        print(f"VIX fetch failed ({e}) — Fear Reversion will be skipped.", file=sys.stderr)
+        vix_elevated_dates = set()
+
+    strategy_names = ("breakout", "ema_pullback", "vcp", "mean_reversion", "fib_pullback", "fear_reversion")
 
     trades: list[dict] = []
 
     for D in all_dates:
         Dd = _to_date(D)
+        vix_high_today = Dd in vix_elevated_dates
         pools: dict[str, list[tuple[dict, str]]] = defaultdict(list)
 
         for stock_key, full_df in data.items():
@@ -224,6 +250,7 @@ def run_backtest(
             v = analyse_vcp(stock_key, sl)
             m = analyse_mean_reversion(stock_key, sl)
             f = analyse_fib_pullback(stock_key, sl)
+            fr = analyse_fear_reversion(stock_key, sl) if vix_high_today else None
 
             if b:
                 pools["breakout"].append((b, stock_key))
@@ -235,6 +262,8 @@ def run_backtest(
                 pools["mean_reversion"].append((m, stock_key))
             if f:
                 pools["fib_pullback"].append((f, stock_key))
+            if fr:
+                pools["fear_reversion"].append((fr, stock_key))
 
         for strat_name in strategy_names:
             lst = pools[strat_name]
@@ -410,7 +439,8 @@ def write_reports(out_dir: str, trades: list[dict], summary: list[dict]) -> None
 
     print(f"Wrote: {trades_path}")
     print(f"Wrote: {summary_path}")
-    print("\nNote: RS resilience is not backtested (no Nifty series in DB).")
+    print("\nNote: RS Resilience is not backtested (no Nifty series in DB).")
+    print("Fear Reversion uses ^INDIAVIX fetched from yfinance — regime filter applied per day.")
 
 
 def parse_date(s: str) -> date:

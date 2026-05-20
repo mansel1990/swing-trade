@@ -12,12 +12,13 @@ Why this complements the existing scanners:
 Filters (all must pass):
   1. Uptrend          — today close > 50 EMA
   2. Swing leg found  — recent swing low -> swing high in the last 30 bars
-  3. Discount zone    — today close <= 50% retracement of that leg
+  3. Discount zone    — today close <= 61.8% retracement (was 50% — tightened after backtest)
   4. Pullback count   — >= 3 red bars in the last 5 bars (excluding today)
   5. Pullback size    — at least one of those red bars has a body >= 1.5x avg body
   6. Confirmation     — today is green AND today close > yesterday close
   7. RSI sanity       — RSI(14) between 30 and 60
   8. Not overextended — today close <= 50 EMA * 1.15
+  9. Volume floor     — green candle volume >= 0.8x avg (filters no-volume traps)
 """
 
 import sys
@@ -36,7 +37,7 @@ EMA_TREND           = 50
 SWING_LOOKBACK      = 30
 SWING_MIN_BARS      = 5
 SWING_MIN_LEG_PCT   = 0.03
-FIB_GATE            = 0.5        # current must be at or below 50% retracement
+FIB_GATE            = 0.618      # must retrace past 61.8% — the real "discount zone"
 FIB_STRONG          = 0.78       # >=78% retrace earns "Strong" tag
 PULLBACK_LOOKBACK   = 5
 PULLBACK_BODY_MULT  = 1.5
@@ -47,7 +48,8 @@ MAX_ABOVE_EMA       = 0.15
 ENTRY_MAX_PCT       = 0.005      # entry zone upper bound = close + 0.5%
 STOP_BELOW_SUPPORT  = 0.01       # SL 1% below swing low
 STOP_HARD_PCT       = 0.03       # hard floor: SL never more than 3% below entry
-TARGET_RR           = 3.0        # 1:3 R:R (Pat: "risking 1% for 3% gain")
+TARGET_RR           = 3.0        # 1:3 R:R (Pat's framework — keep the wide target, improve win rate via tighter filters)
+MIN_VOLUME_RATIO    = 0.8        # green candle needs at least 0.8x avg (filters no-volume traps)
 VOLUME_AVG_DAYS     = 20
 BOUNCE_VOL_RATIO    = 1.2
 MIN_ROWS_NEEDED     = EMA_TREND + SWING_LOOKBACK + PULLBACK_AVG_BASE + 10
@@ -131,6 +133,11 @@ def analyse_fib_pullback(symbol: str, df: pd.DataFrame) -> dict | None:
         target = round(entry_min + TARGET_RR * risk, 2)
 
         volume_ratio = calculate_volume_ratio(volume, VOLUME_AVG_DAYS)
+
+        # ── Volume floor: green candle needs real participation ───────────────
+        if volume_ratio < MIN_VOLUME_RATIO:
+            return None
+
         strong = retrace >= FIB_STRONG and volume_ratio >= BOUNCE_VOL_RATIO
 
         return {
