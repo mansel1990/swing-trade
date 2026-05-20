@@ -1,16 +1,19 @@
 """
 Relative Strength Resilience Scanner.
 
-Finds stocks holding up (or even rising) while Nifty 50 is weak.
+Finds stocks holding up (or even rising) while Nifty 50 is flat or weak.
 These leaders typically outperform when the market eventually turns.
 
-Filters (all must pass):
-  1. Nifty is weak       — Nifty close < its 20 EMA AND down >2% over 10 days
-  2. Stock is resilient  — stock 10-day return > Nifty 10-day return by >=5 pp
-  3. Mansfield RS rising — smoothed (stock/nifty) ratio today > same 5 days ago
-  4. Stock above 50 EMA  — own trend intact
-  5. Higher low pattern  — 10-day low today > 10-day low from 20 days ago
-  6. RSI 45-65           — pulled in but not overbought
+Regime filter (checked once in main.py before any stock analysis):
+  - Nifty 10-day return < +1%  (sideways OR declining market)
+  - Previously required >2% drop; relaxed so strategy fires in choppy markets too
+
+Per-stock filters (all must pass):
+  1. Stock is resilient  — stock 10-day return > Nifty 10-day return by >=5 pp
+  2. Mansfield RS rising — smoothed (stock/nifty) ratio today > same 5 days ago
+  3. Stock above 50 EMA  — own trend intact
+  4. Higher low pattern  — 10-day low today > 10-day low from 20 days ago
+  5. RSI 45-65           — pulled in but not overbought
 """
 
 import sys
@@ -25,7 +28,7 @@ from indicators import (
 # ── Strategy parameters ───────────────────────────────────────────────────────
 NIFTY_EMA           = 20
 NIFTY_DROP_LOOKBACK = 10
-NIFTY_MIN_DROP      = 0.02       # nifty must be down >=2% over 10 days
+NIFTY_MAX_GAIN      = 0.01       # nifty 10-day return must be < +1% (sideways or down)
 RS_OUTPERFORM_PP    = 5.0        # stock outperforms by 5 percentage points
 STOCK_EMA           = 50
 HIGHER_LOW_LOOKBACK = 20
@@ -42,18 +45,19 @@ MIN_ROWS_NEEDED     = STOCK_EMA + HIGHER_LOW_LOOKBACK + 10
 
 
 def is_nifty_weak(nifty_df: pd.DataFrame) -> bool:
-    """Pre-check the Nifty regime once per scanner run."""
+    """
+    Pre-check the Nifty regime once per scanner run.
+    Returns True when Nifty is NOT in a strong upswing (flat or declining).
+    Threshold: 10-day return < +1%.  Fires in sideways AND bear markets.
+    """
     try:
         close = nifty_df["Close"].dropna()
-        if len(close) < NIFTY_EMA + NIFTY_DROP_LOOKBACK:
+        if len(close) < NIFTY_DROP_LOOKBACK + 2:
             return False
-        ema20 = float(calculate_ema(close, NIFTY_EMA).iloc[-1])
-        today = float(close.iloc[-1])
-        if today >= ema20:
-            return False
+        today        = float(close.iloc[-1])
         ten_days_ago = float(close.iloc[-(NIFTY_DROP_LOOKBACK + 1)])
-        drop = (ten_days_ago - today) / ten_days_ago
-        return drop >= NIFTY_MIN_DROP
+        ten_day_return = (today - ten_days_ago) / ten_days_ago  # positive = up
+        return ten_day_return < NIFTY_MAX_GAIN
     except Exception:
         return False
 

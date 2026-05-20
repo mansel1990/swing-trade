@@ -22,7 +22,7 @@ from indicators import (
 )
 
 # ── Strategy parameters ───────────────────────────────────────────────────────
-RSI_MAX             = 30
+RSI_MAX             = 35    # relaxed from 30 — catches the 32-35 zone where real reversals start
 EMA_TARGET          = 20
 EMA_LONG            = 200
 SUPPORT_TOLERANCE   = 0.03

@@ -1,12 +1,13 @@
 """
-Momentum Scanner — runs five strategies on the same batch download each evening.
+Momentum Scanner — runs six strategies on the same batch download each evening.
 
 Strategies:
   1. Breakout       → swing.signals                  (consolidation breakout)
   2. EMA Pull       → swing.ema_signals              (pullback to 20 EMA in uptrend)
   3. VCP            → swing.vcp_signals              (volatility contraction pattern)
-  4. RS Resilience  → swing.rs_signals               (outperforming weak Nifty)
-  5. Mean Reversion → swing.mean_reversion_signals   (RSI<30 bounce at support)
+  4. RS Resilience  → swing.rs_signals               (outperforming flat/weak Nifty)
+  5. Mean Reversion → swing.mean_reversion_signals   (RSI<35 bounce at support)
+  6. Fear Reversion → swing.fear_reversion_signals   (VIX spike + large-cap oversold)
 
 Usage:
   python main.py                           # scan only, print results
@@ -16,6 +17,7 @@ Usage:
   python main.py --strategy vcp            # run only VCP
   python main.py --strategy rs             # run only Relative Strength
   python main.py --strategy mr             # run only Mean Reversion
+  python main.py --strategy fr             # run only Fear Reversion
 """
 
 import sys
@@ -27,6 +29,7 @@ from ema_scanner import analyse_ema_pullback
 from vcp_scanner import analyse_vcp
 from rs_scanner import analyse_rs_resilience, is_nifty_weak
 from mean_reversion_scanner import analyse_mean_reversion
+from fear_reversion_scanner import analyse_fear_reversion, is_vix_elevated
 from stocks import STOCKS, BATCH_SIZE
 
 # ── Breakout strategy parameters ─────────────────────────────────────────────
@@ -44,6 +47,7 @@ TOP_N               = 5
 BATCH_DELAY_SEC     = 2
 MIN_ROWS_NEEDED     = CONSOLIDATION_DAYS + VOLUME_AVG_DAYS + 5
 NIFTY_TICKER        = "^NSEI"
+VIX_TICKER          = "^INDIAVIX"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -155,6 +159,7 @@ def print_signal(s: dict, strategy: str = "BREAKOUT"):
         "VCP":      "Pivot",
         "RS":       "20EMA",
         "MR":       "Suprt",
+        "FR":       "Suprt",
         "BREAKOUT": "Brkout",
     }
     label = label_map.get(strategy, "Level")
@@ -184,7 +189,7 @@ def print_section(title: str, results: list[dict], strategy: str):
 
 # Strategy registry: (key, label, table, log_strategy_name, runner)
 # The runner returns (results_list, signal_label_for_print).
-STRATEGY_KEYS = ("breakout", "ema", "vcp", "rs", "mr")
+STRATEGY_KEYS = ("breakout", "ema", "vcp", "rs", "mr", "fr")
 
 
 def main(save_to_db: bool = False, strategy: str = "all"):
@@ -195,17 +200,19 @@ def main(save_to_db: bool = False, strategy: str = "all"):
     run_vcp      = "vcp"      in selected
     run_rs       = "rs"       in selected
     run_mr       = "mr"       in selected
+    run_fr       = "fr"       in selected
 
     total   = len(STOCKS)
     batches = [STOCKS[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
 
     label_map = {
-        "all":      "Breakout + EMA + VCP + RS + Mean Reversion",
+        "all":      "Breakout + EMA + VCP + RS + Mean Reversion + Fear Reversion",
         "breakout": "Breakout",
         "ema":      "EMA Pullback",
         "vcp":      "VCP",
         "rs":       "Relative Strength Resilience",
         "mr":       "Mean Reversion",
+        "fr":       "Fear Reversion",
     }
     print(f"Scanning {total} stocks in {len(batches)} batch(es) | "
           f"Strategies: {label_map.get(strategy, strategy)}\n")
@@ -221,13 +228,28 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             run_rs = False
         else:
             nifty_weak = is_nifty_weak(nifty_df)
-            print(f"  [Nifty] regime: {'WEAK (RS scan active)' if nifty_weak else 'strong (RS will skip)'}")
+            print(f"  [Nifty] regime: {'flat/weak — RS scan ACTIVE' if nifty_weak else 'strong (+1%+) — RS will skip'}")
+
+    # Fetch India VIX once if Fear Reversion strategy is active
+    vix_df = pd.DataFrame()
+    vix_high = False
+    if run_fr:
+        print("  [VIX] Downloading ^INDIAVIX for fear reversion...", flush=True)
+        vix_df = fetch_index(VIX_TICKER)
+        if vix_df.empty:
+            print("  [VIX] WARNING: failed to fetch — Fear Reversion strategy will be skipped.")
+            run_fr = False
+        else:
+            vix_high = is_vix_elevated(vix_df)
+            vix_level = round(float(vix_df["Close"].dropna().iloc[-1]), 1)
+            print(f"  [VIX] level: {vix_level} — {'ELEVATED (FR scan active)' if vix_high else 'calm (<15) — FR will skip'}")
 
     breakout_results = []
     ema_results      = []
     vcp_results      = []
     rs_results       = []
     mr_results       = []
+    fr_results       = []
 
     for batch_num, batch in enumerate(batches, 1):
         print(f"  [Batch {batch_num}/{len(batches)}] Downloading {len(batch)} tickers...", flush=True)
@@ -244,6 +266,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             v_signal = analyse_vcp(sym, df)             if run_vcp      else None
             r_signal = analyse_rs_resilience(sym, df, nifty_df) if (run_rs and nifty_weak) else None
             m_signal = analyse_mean_reversion(sym, df)  if run_mr       else None
+            f_signal = analyse_fear_reversion(sym, df)  if (run_fr and vix_high)  else None
 
             tag = []
             if b_signal:
@@ -256,6 +279,8 @@ def main(save_to_db: bool = False, strategy: str = "all"):
                 rs_results.append(r_signal);       tag.append("RS")
             if m_signal:
                 mr_results.append(m_signal);       tag.append("MEAN-REV")
+            if f_signal:
+                fr_results.append(f_signal);       tag.append("FEAR-REV")
 
             if tag:
                 print(f"    {sym:<22} {' + '.join(tag)}")
@@ -264,13 +289,14 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             time.sleep(BATCH_DELAY_SEC)
 
     # Sort and trim
-    for r in (breakout_results, ema_results, vcp_results, rs_results, mr_results):
+    for r in (breakout_results, ema_results, vcp_results, rs_results, mr_results, fr_results):
         r.sort(key=lambda x: x["volume_ratio"], reverse=True)
     top_breakout = breakout_results[:TOP_N]
     top_ema      = ema_results[:TOP_N]
     top_vcp      = vcp_results[:TOP_N]
     top_rs       = rs_results[:TOP_N]
     top_mr       = mr_results[:TOP_N]
+    top_fr       = fr_results[:TOP_N]
 
     if run_breakout:
         print_section("BREAKOUT SIGNALS  (entry above consolidation high)", top_breakout, "BREAKOUT")
@@ -279,9 +305,11 @@ def main(save_to_db: bool = False, strategy: str = "all"):
     if run_vcp:
         print_section("VCP SIGNALS  (Minervini-style tight contractions near pivot)", top_vcp, "VCP")
     if run_rs:
-        print_section("RS RESILIENCE SIGNALS  (outperforming weak Nifty)", top_rs, "RS")
+        print_section("RS RESILIENCE SIGNALS  (outperforming flat/weak Nifty)", top_rs, "RS")
     if run_mr:
-        print_section("MEAN REVERSION SIGNALS  (oversold bounce at support)", top_mr, "MR")
+        print_section("MEAN REVERSION SIGNALS  (RSI<35 oversold bounce at support)", top_mr, "MR")
+    if run_fr:
+        print_section("FEAR REVERSION SIGNALS  (VIX spike + large-cap panic reversal)", top_fr, "FR")
 
     if save_to_db:
         from db import ensure_table, delete_today_signals, save_signals
@@ -297,6 +325,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             (run_vcp,      "vcp_signals",              top_vcp,      "vcp"),
             (run_rs,       "rs_signals",               top_rs,       "rs_resilience"),
             (run_mr,       "mean_reversion_signals",   top_mr,       "mean_reversion"),
+            (run_fr,       "fear_reversion_signals",   top_fr,       "fear_reversion"),
         ]
         for run_flag, table, top_list, log_name in save_jobs:
             if not run_flag:
@@ -309,7 +338,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             else:
                 print(f"(Nothing to save - no {log_name} signals today.)")
 
-    return top_breakout, top_ema, top_vcp, top_rs, top_mr
+    return top_breakout, top_ema, top_vcp, top_rs, top_mr, top_fr
 
 
 if __name__ == "__main__":

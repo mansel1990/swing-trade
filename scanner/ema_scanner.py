@@ -22,8 +22,8 @@ from indicators import calculate_rsi, calculate_volume_ratio, calculate_ema
 # ── Strategy parameters ───────────────────────────────────────────────────────
 EMA_FAST            = 20
 EMA_SLOW            = 50
-PULLBACK_LOOKBACK   = 3      # days to look back for EMA touch
-PULLBACK_TOLERANCE  = 0.015  # price within 1.5% of EMA counts as a touch
+PULLBACK_LOOKBACK   = 5      # days to look back for EMA touch (extended from 3)
+PULLBACK_TOLERANCE  = 0.02   # price within 2% of EMA counts as a touch (extended from 1.5%)
 RSI_MIN             = 40
 RSI_MAX             = 62
 MAX_ABOVE_SLOW_EMA  = 0.15   # price must be within 15% above 50 EMA
