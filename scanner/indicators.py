@@ -131,3 +131,103 @@ def is_bullish_reversal_candle(df: pd.DataFrame, idx: int = -1) -> bool:
     midpoint = (prev_o + prev_c) / 2
     pierces = today_c >= midpoint  # piercing or stronger
     return pierces
+
+
+def find_swing_high_low(
+    highs: pd.Series,
+    lows: pd.Series,
+    lookback: int = 30,
+    min_bars_between: int = 5,
+    min_leg_pct: float = 0.03,
+) -> tuple[int, int, float, float] | None:
+    """
+    Find the most recent valid swing leg (an upward impulse being retraced).
+
+    Algorithm:
+      1. Inspect the last `lookback` bars EXCLUDING today.
+      2. swing_high = bar with max(high) in that window.
+      3. swing_low  = bar with min(low) STRICTLY BEFORE swing_high in the same window.
+      4. Require at least `min_bars_between` bars between low and high.
+      5. Require leg size >= min_leg_pct of swing_low.
+
+    Returns (low_idx, high_idx, low_price, high_price) where indices are absolute
+    positions in the original series, or None if no valid leg exists.
+    """
+    if len(highs) < lookback + 1 or len(lows) < lookback + 1:
+        return None
+
+    window_high = highs.iloc[-(lookback + 1):-1]
+    window_low  = lows.iloc[-(lookback + 1):-1]
+    if window_high.empty or window_low.empty:
+        return None
+
+    high_pos_in_window = int(window_high.values.argmax())
+    if high_pos_in_window < min_bars_between:
+        return None  # no room for a swing low before the high
+
+    pre_high_lows = window_low.iloc[:high_pos_in_window]
+    low_pos_in_window = int(pre_high_lows.values.argmin())
+
+    if high_pos_in_window - low_pos_in_window < min_bars_between:
+        return None
+
+    swing_high = float(window_high.iloc[high_pos_in_window])
+    swing_low  = float(window_low.iloc[low_pos_in_window])
+    if swing_low <= 0 or swing_high <= swing_low:
+        return None
+    if (swing_high - swing_low) / swing_low < min_leg_pct:
+        return None
+
+    # Translate window positions to absolute indices in the input series.
+    base = len(highs) - (lookback + 1)
+    return (base + low_pos_in_window, base + high_pos_in_window, swing_low, swing_high)
+
+
+def fib_retracement_pct(swing_low: float, swing_high: float, current: float) -> float:
+    """
+    Retracement % from swing_high toward swing_low.
+      0.0 = at swing_high
+      0.5 = exact midpoint (the discount-zone threshold)
+      1.0 = back at swing_low
+    Values > 0.5 are in the discount zone.
+    """
+    if swing_high <= swing_low:
+        return 0.0
+    return (swing_high - current) / (swing_high - swing_low)
+
+
+def has_big_red_pullback(
+    opens: pd.Series,
+    closes: pd.Series,
+    lookback: int = 5,
+    body_multiplier: float = 1.5,
+    avg_baseline: int = 20,
+) -> bool:
+    """
+    True if the last `lookback` bars (excluding today) contain:
+      - at least 3 red bars (close < open), AND
+      - at least one red bar whose body is >= body_multiplier x avg body over
+        the prior `avg_baseline` bars (the bars BEFORE the pullback window).
+
+    Implements: "three red candles in a row and some big candles too."
+    """
+    if len(opens) < lookback + avg_baseline + 1 or len(closes) < lookback + avg_baseline + 1:
+        return False
+
+    pullback_opens  = opens.iloc[-(lookback + 1):-1]
+    pullback_closes = closes.iloc[-(lookback + 1):-1]
+
+    is_red = (pullback_closes < pullback_opens)
+    if int(is_red.sum()) < 3:
+        return False
+
+    # Baseline avg body computed from the bars BEFORE the pullback window.
+    base_opens  = opens.iloc[-(lookback + avg_baseline + 1):-(lookback + 1)]
+    base_closes = closes.iloc[-(lookback + avg_baseline + 1):-(lookback + 1)]
+    base_bodies = (base_opens - base_closes).abs()
+    avg_body = float(base_bodies.mean())
+    if avg_body <= 0:
+        return False
+
+    red_bodies = (pullback_opens - pullback_closes)[is_red]  # red => open > close, positive
+    return bool((red_bodies >= body_multiplier * avg_body).any())
