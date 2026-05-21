@@ -96,6 +96,11 @@ def analyse_ema_pullback(symbol: str, df: pd.DataFrame) -> dict | None:
         entry_min = ema20_level          # limit order at the EMA — the real buy zone
         entry_max = round(ema20_now * (1 + ENTRY_MAX_PCT), 2)
         target    = round(entry_min * (1 + TARGET_PCT), 2)
+
+        # Guard: if CMP has already bounced so far that target is <2% away, skip.
+        # e.g. EMA=1047, target=1089, CMP=1085 → only 0.4% upside left — useless.
+        if target < cmp * 1.02:
+            return None
         # Stop loss = tighter of {2% below 20 EMA, 3% below entry}.
         sl_ema    = ema20_now * (1 - STOP_PCT)
         sl_hard   = entry_min * (1 - STOP_HARD_PCT)
