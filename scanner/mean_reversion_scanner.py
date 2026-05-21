@@ -82,8 +82,10 @@ def analyse_mean_reversion(symbol: str, df: pd.DataFrame) -> dict | None:
         else:
             support_level = round(swing_low, 2)
 
-        entry_min = cmp
-        entry_max = round(cmp * (1 + ENTRY_MAX_PCT), 2)
+        # Limit order: set entry 0.5% below close — oversold stocks often dip
+        # slightly at open before the reversal gains traction.
+        entry_min = round(cmp * 0.995, 2)
+        entry_max = cmp                  # don't chase above close for oversold stocks
         target    = round(max(ema20, cmp * 1.04), 2)  # at least +4%, ideally to 20 EMA
         stop_loss = round(today_low * (1 - STOP_PCT), 2)
 

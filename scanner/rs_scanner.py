@@ -120,8 +120,10 @@ def analyse_rs_resilience(
         ema20_series = calculate_ema(close, NIFTY_EMA)
         ema20_level  = round(float(ema20_series.iloc[-1]), 2)
 
-        entry_min = cmp
-        entry_max = round(cmp * (1 + ENTRY_MAX_PCT), 2)
+        # Limit order: set entry 1% below close — these leaders hold their bid
+        # so a small pullback at open gets a better fill than chasing at CMP.
+        entry_min = round(cmp * 0.99, 2)
+        entry_max = cmp                  # don't chase above yesterday's close
         target    = round(entry_min * (1 + TARGET_PCT), 2)
         # Stop is the larger (= tighter, higher) of: 20 EMA -3%, recent swing low
         stop_ema     = ema20_level * (1 - STOP_PCT)

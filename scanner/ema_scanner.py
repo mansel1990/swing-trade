@@ -91,11 +91,12 @@ def analyse_ema_pullback(symbol: str, df: pd.DataFrame) -> dict | None:
         volume_ratio = calculate_volume_ratio(volume, VOLUME_AVG_DAYS)
         ema20_level  = round(ema20_now, 2)
 
-        entry_min = cmp
+        # Limit order: set entry AT the 20 EMA level (the actual support being bought).
+        # This fixes the prior inversion where entry_min (cmp) > entry_max (ema20+1%).
+        entry_min = ema20_level          # limit order at the EMA — the real buy zone
         entry_max = round(ema20_now * (1 + ENTRY_MAX_PCT), 2)
         target    = round(entry_min * (1 + TARGET_PCT), 2)
         # Stop loss = tighter of {2% below 20 EMA, 3% below entry}.
-        # Guards R:R from collapsing when CMP runs far above the 20 EMA.
         sl_ema    = ema20_now * (1 - STOP_PCT)
         sl_hard   = entry_min * (1 - STOP_HARD_PCT)
         stop_loss = round(max(sl_ema, sl_hard), 2)
