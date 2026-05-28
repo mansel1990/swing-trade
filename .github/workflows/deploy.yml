@@ -1,0 +1,21 @@
+name: Deploy scanner to DO
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scanner/**"
+      - "requirements.txt"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: /opt/mcube-scanner/deploy.sh
