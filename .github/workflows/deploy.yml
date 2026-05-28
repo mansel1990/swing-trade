@@ -2,7 +2,7 @@ name: Deploy scanner to DO
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "scanner/**"
       - "requirements.txt"
