@@ -130,6 +130,14 @@ def analyse_rs_resilience(
         stop_swing   = float(low.iloc[-HL_WINDOW:].min())
         stop_loss    = round(max(stop_ema, stop_swing), 2)
 
+        # ── Guard: stop must be below entry (can break on tight-range stocks) ──
+        # entry_min is CMP−1%; stop_swing is the 10-day low which can sit
+        # above entry on stocks with very tight consolidation ranges.
+        # A stop above entry produces a positive P&L on a "stop loss" hit —
+        # which is nonsensical. Skip the signal instead of emitting bad data.
+        if stop_loss >= entry_min:
+            return None
+
         outperformance = stock_ret - nifty_ret
         strong = outperformance >= 10.0 and volume_ratio >= 1.2
 
