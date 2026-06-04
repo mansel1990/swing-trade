@@ -66,7 +66,6 @@ def analyse_rs_resilience(
     symbol: str,
     df: pd.DataFrame,
     nifty_df: pd.DataFrame,
-    live_price: float | None = None,
 ) -> dict | None:
     try:
         close  = df["Close"].dropna()
@@ -77,8 +76,7 @@ def analyse_rs_resilience(
         if len(close) < MIN_ROWS_NEEDED or len(nclose) < NIFTY_DROP_LOOKBACK + 10:
             return None
 
-        # In mid-day mode live_price is the current intraday price; otherwise use yesterday's close.
-        cmp = round(live_price, 2) if live_price is not None else round(float(close.iloc[-1]), 2)
+        cmp = round(float(close.iloc[-1]), 2)
 
         # ── Filter 2: stock outperforming Nifty over 10 days ─────────────────
         stock_10d_ago = float(close.iloc[-(NIFTY_DROP_LOOKBACK + 1)])
