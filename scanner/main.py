@@ -122,7 +122,11 @@ def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
 
 
 def schedule_notification(n_signals: int, delay_sec: int = 600) -> None:
-    """Spawn a detached PowerShell process that shows a Windows notification after delay_sec seconds."""
+    """Spawn a detached PowerShell process that shows a Windows notification after delay_sec seconds.
+    No-op on non-Windows (server runs don't have a desktop)."""
+    if sys.platform != "win32":
+        print(f"  [Notification] Skipped — desktop alerts only on Windows.")
+        return
     title = "RS Mid-day Scanner"
     body = (
         f"{n_signals} signal(s) found — open the dashboard to act."
