@@ -24,6 +24,7 @@ Usage:
 
 import sys
 import time
+import subprocess
 import yfinance as yf
 import pandas as pd
 from indicators import calculate_rsi, calculate_volume_ratio, calculate_breakout_level, is_consolidating
@@ -81,6 +82,71 @@ def fetch_batch(symbols: list[str]) -> dict[str, pd.DataFrame]:
         except Exception:
             continue
     return result
+
+
+def fetch_live_prices(symbols: list[str]) -> dict[str, float]:
+    """Fetch the latest intraday price (15-min bars) for a batch of symbols."""
+    if not symbols:
+        return {}
+    tickers_str = " ".join(symbols)
+    try:
+        raw = yf.download(
+            tickers_str,
+            period="1d",
+            interval="15m",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+    except Exception as e:
+        print(f"  [live prices] fetch error: {e}", file=sys.stderr)
+        return {}
+
+    result = {}
+    for sym in symbols:
+        try:
+            if len(symbols) == 1:
+                df = raw.copy()
+            else:
+                if sym not in raw.columns.get_level_values(0):
+                    continue
+                df = raw[sym].copy()
+            close = df["Close"].dropna()
+            if close.empty:
+                continue
+            result[sym] = round(float(close.iloc[-1]), 2)
+        except Exception:
+            continue
+    return result
+
+
+def schedule_notification(n_signals: int, delay_sec: int = 600) -> None:
+    """Spawn a detached PowerShell process that shows a Windows notification after delay_sec seconds."""
+    title = "RS Mid-day Scanner"
+    body = (
+        f"{n_signals} signal(s) found — open the dashboard to act."
+        if n_signals else
+        "No RS signals found in this mid-day scan."
+    )
+    ps_cmd = (
+        f"Start-Sleep -Seconds {delay_sec}; "
+        f"Add-Type -AssemblyName System.Windows.Forms; "
+        f"$n = New-Object System.Windows.Forms.NotifyIcon; "
+        f"$n.Icon = [System.Drawing.SystemIcons]::Information; "
+        f"$n.Visible = $true; "
+        f"$n.ShowBalloonTip(15000, '{title}', '{body}', "
+        f"[System.Windows.Forms.ToolTipIcon]::Info); "
+        f"Start-Sleep -Seconds 16; "
+        f"$n.Dispose()"
+    )
+    subprocess.Popen(
+        ["powershell", "-WindowStyle", "Hidden", "-NonInteractive", "-Command", ps_cmd],
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"  [Notification] Reminder set — you'll be notified in {delay_sec // 60} minute(s).")
 
 
 def fetch_index(ticker: str) -> pd.DataFrame:
@@ -196,7 +262,11 @@ def print_section(title: str, results: list[dict], strategy: str):
 STRATEGY_KEYS = ("breakout", "ema", "vcp", "rs", "mr", "fib", "fr")
 
 
-def main(save_to_db: bool = False, strategy: str = "all"):
+def main(save_to_db: bool = False, strategy: str = "all", midday: bool = False):
+    if midday:
+        strategy = "rs"
+        print("Mid-day mode: running RS Resilience scan with live intraday prices.\n")
+
     selected = STRATEGY_KEYS if strategy == "all" else (strategy,)
 
     run_breakout = "breakout" in selected
@@ -263,6 +333,11 @@ def main(save_to_db: bool = False, strategy: str = "all"):
         data = fetch_batch(batch)
         print(f"  [Batch {batch_num}/{len(batches)}] Got data for {len(data)}/{len(batch)}. Analysing...")
 
+        live_prices: dict[str, float] = {}
+        if midday and run_rs and nifty_weak:
+            print(f"  [Batch {batch_num}/{len(batches)}] Fetching live intraday prices...", flush=True)
+            live_prices = fetch_live_prices(batch)
+
         for sym in batch:
             if sym not in data:
                 continue
@@ -271,7 +346,7 @@ def main(save_to_db: bool = False, strategy: str = "all"):
             b_signal = analyse_breakout(sym, df)        if run_breakout else None
             e_signal = analyse_ema_pullback(sym, df)    if run_ema      else None
             v_signal = analyse_vcp(sym, df)             if run_vcp      else None
-            r_signal = analyse_rs_resilience(sym, df, nifty_df) if (run_rs and nifty_weak) else None
+            r_signal = analyse_rs_resilience(sym, df, nifty_df, live_price=live_prices.get(sym)) if (run_rs and nifty_weak) else None
             m_signal = analyse_mean_reversion(sym, df)  if run_mr       else None
             fi_signal = analyse_fib_pullback(sym, df)   if run_fib      else None
             f_signal = analyse_fear_reversion(sym, df)  if (run_fr and vix_high) else None
@@ -297,6 +372,9 @@ def main(save_to_db: bool = False, strategy: str = "all"):
 
         if batch_num < len(batches):
             time.sleep(BATCH_DELAY_SEC)
+
+    if midday:
+        schedule_notification(len(rs_results))
 
     # Sort and trim
     for r in (breakout_results, ema_results, vcp_results, rs_results, mr_results, fib_results, fr_results):
@@ -356,10 +434,11 @@ def main(save_to_db: bool = False, strategy: str = "all"):
 
 
 if __name__ == "__main__":
-    save     = "--save" in sys.argv
-    strat    = "all"
+    save    = "--save"    in sys.argv
+    midday  = "--midday"  in sys.argv
+    strat   = "all"
     if "--strategy" in sys.argv:
         idx = sys.argv.index("--strategy")
         if idx + 1 < len(sys.argv):
             strat = sys.argv[idx + 1]
-    main(save_to_db=save, strategy=strat)
+    main(save_to_db=save, strategy=strat, midday=midday)
