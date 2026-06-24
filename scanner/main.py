@@ -25,15 +25,30 @@ Pipeline (when called as `python main.py`):
        - saves to swing.mean_reversion_signals (existing table)
   3. Summary ntfy with per-strategy counts + capital allocation
 
-The legacy 7-strategy scanner lives at main_sanjay.py — kept for ad-hoc runs
-that still need yfinance + the .NS Nifty-200 universe.
+The legacy 7-strategy scanner lives at main_sanjay.py — this is what the
+DigitalOcean cron runs (see scanner/run.sh).
+
+main.py is for LOCAL use only when daily_suggestor is checked out alongside
+this repo (writes daily_suggestor.trades + swing_mr). It is NOT used on the droplet.
 """
+import os
 import sys
 from pathlib import Path
 
-# Make daily_suggestor importable
+# Make daily_suggestor importable (separate repo, NOT part of swing-trade)
 _HERE = Path(__file__).resolve().parent
-_DAILY_SUGGESTOR = _HERE.parent.parent / "daily_suggestor"
+_DEFAULT_DS = _HERE.parent.parent / "daily_suggestor"
+_DAILY_SUGGESTOR = Path(os.environ.get("DAILY_SUGGESTOR_DIR", _DEFAULT_DS)).resolve()
+_RUN_DAILY = _DAILY_SUGGESTOR / "run_daily.py"
+
+if not _RUN_DAILY.is_file():
+    print("ERROR: daily_suggestor not found.")
+    print(f"  Expected: {_RUN_DAILY}")
+    print("  Clone your daily_suggestor repo, e.g.:")
+    print(f"    git clone <repo-url> {_DEFAULT_DS}")
+    print("  Or set DAILY_SUGGESTOR_DIR to an existing checkout.")
+    sys.exit(1)
+
 if str(_DAILY_SUGGESTOR) not in sys.path:
     sys.path.insert(0, str(_DAILY_SUGGESTOR))
 

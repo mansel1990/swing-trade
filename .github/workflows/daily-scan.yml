@@ -1,0 +1,19 @@
+name: Daily evening scan
+
+on:
+  schedule:
+    # 12:30 UTC = 6:00 PM IST, Mon–Fri (backup if droplet crontab stops)
+    - cron: "30 12 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run scanner on DigitalOcean
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: /opt/mcube-scanner/swing-trade/scanner/run.sh

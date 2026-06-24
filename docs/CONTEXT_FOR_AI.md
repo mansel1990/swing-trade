@@ -20,8 +20,7 @@ A personal swing trading assistant for NSE (Indian) stocks. Two parts:
 ## Python scanner — key facts
 - **Location:** `C:\Projects\trading\scanner\`
 - **GitHub:** https://github.com/mansel1990/swing-trade
-- **Deployment:** Railway, cron `30 12 * * 1-5` (12:30 UTC = 6 PM IST weekdays)
-- **Root dir in Railway:** `scanner/` (important — must be set in Railway settings)
+- **Deployment:** DigitalOcean droplet (Bangalore), cron `0 18 * * 1-5` IST via `scanner/run.sh`. Railway **retired** (see `docs/deployment.md`).
 - **Run command:** `python main.py --save`
 - **Test command (no DB write):** `python main.py`
 - **Single strategy:** `python main.py --strategy ema` (ema | breakout | vcp | rs | mr | fib)
@@ -88,7 +87,7 @@ There is also a `stocks` schema used for daily OHLCV charts — do NOT touch it.
 | Add info drawer for new strategy | `components/stocks/swing/strategy-info-drawer.tsx` — STRATEGY_INFO record |
 | Change performance colors | `performance-client.tsx` — STRATEGY_META |
 | Check DB tables | Neon console → swing schema |
-| Check Railway cron logs | Railway dashboard → Deployments |
+| Check Railway cron logs | **Retired** — use `tail /var/log/mcube-scanner.log` on DO droplet |
 
 ## Known issues / decisions
 - RS Resilience only produces signals when Nifty is weak — zero signals on strong days is correct behavior
